@@ -3,12 +3,11 @@ use binaryninja::{
     binary_view::BinaryViewExt,
     logger::Logger,
     low_level_il::{
-        expression::{
-            ExpressionHandler, LowLevelILExpression, ValueExpr,
-        }, function::{FunctionForm, FunctionMutability}, instruction::{
-            InstructionHandler, LowLevelILInstruction,
-            LowLevelInstructionIndex,
-        }, lifting::LowLevelILLabel, LowLevelILRegister
+        LowLevelILRegister,
+        expression::{ExpressionHandler, LowLevelILExpression, ValueExpr},
+        function::{FunctionForm, FunctionMutability},
+        instruction::{InstructionHandler, LowLevelILInstruction, LowLevelInstructionIndex},
+        lifting::LowLevelILLabel,
     },
     rc::Ref,
     workflow::{Activity, AnalysisContext, Workflow},
@@ -17,30 +16,39 @@ use log::LevelFilter;
 
 mod llil;
 
-const OBJC_EXTRAS_ACTIVITY_NAME: &str = "bdash.objc-extras";
-const OBJC_EXTRAS_ACTIVITY_CONFIG: &str = r#"{
-    "name" : "bdash.objc-extras",
-    "title" : "Extra Objective-C processing",
-    "description": "",
+const OBJC_REMOVE_MEMORY_MANAGMENT_ACTIVITY_NAME: &str = "bdash.objc-remove-memory-management";
+const OBJC_REMOVE_MEMORY_MANAGMENT_ACTIVITY_CONFIG: &str = r#"{
+    "name": "bdash.objc-remove-memory-management",
+    "title": "Remove Objective-C memory management calls",
+    "description": "Remove calls to objc_retain / objc_release / objc_autorelease to simplify the resulting higher-level ILs",
     "eligibility": {
         "auto": {}
     }
 }"#;
 
-const IGNORABLE_FUNCTIONS: &[&str] = &[
-    "_objc_retain",
-    "_objc_release",
+fn tag_type_for_view(
+    view: &binaryninja::binary_view::BinaryView,
+) -> Ref<binaryninja::tags::TagType> {
+    view.tag_type_by_name("Objective-C Extras")
+        .unwrap_or_else(|| view.create_tag_type("Objective-C Extras", "OC"))
+}
+
+const IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS: &[&str] = &[
     "_objc_autorelease",
     "_objc_autoreleaseReturnValue",
+    "_objc_release",
+    "_objc_retain",
+    "_objc_retainAutorelease",
     "_objc_retainAutoreleasedReturnValue",
-    "j__objc_retain",
-    "j__objc_release",
     "j__objc_autorelease",
     "j__objc_autoreleaseReturnValue",
+    "j__objc_release",
+    "j__objc_retain",
+    "j__objc_retainAutorelease",
     "j__objc_retainAutoreleasedReturnValue",
 ];
 
-fn is_call_to_ignorable_function<'func, A, M, F>(
+fn is_call_to_ignorable_memory_management_function<'func, A, M, F>(
     view: &binaryninja::binary_view::BinaryView,
     instr: &'func LowLevelILInstruction<'func, A, M, F>,
 ) -> bool
@@ -60,18 +68,21 @@ where
     };
 
     let Some(symbol) = view.symbol_by_address(target) else {
-        log::info!("No symbol found for address {:#0x}", target);
         return false;
     };
 
-    if IGNORABLE_FUNCTIONS.contains(&symbol.full_name().as_str()) {
-        log::warn!("Ignoring call to {}", symbol.full_name());
+    if IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS.contains(&symbol.full_name().as_str()) {
+        log::warn!(
+            "Ignoring call to {} ({target:#0x}) at {:#0x}",
+            symbol.full_name(),
+            instr.address()
+        );
         return true;
     }
     return false;
 }
 
-fn process_objc_extras(analysis_context: &AnalysisContext) {
+fn remove_memory_management(analysis_context: &AnalysisContext) {
     let Some(llil) = (unsafe { analysis_context.llil_function() }) else {
         return;
     };
@@ -93,12 +104,12 @@ fn process_objc_extras(analysis_context: &AnalysisContext) {
 
         // TODO: Detect calls to `objc_release` that are immediately after a load of a struct field.
         // It might be preferable to leave those in place since otherwise the load is left behind.
-        if !is_call_to_ignorable_function(&analysis_context.view(), &instr) {
+        if !is_call_to_ignorable_memory_management_function(&analysis_context.view(), &instr) {
             continue;
         }
 
-        use llil::Instruction::*;
         use llil::Expression::*;
+        use llil::Instruction::*;
         match (&instr).into() {
             TailCall(_) => unsafe {
                 llil.replace_expression(
@@ -113,6 +124,16 @@ fn process_objc_extras(analysis_context: &AnalysisContext) {
                 // The shared cache workflow inlines calls to stub functions, which causes them
                 // to show up as a `lr = <next instruction>; goto <stub function instruction>;` sequence.
                 // We need to remove the load of `lr`  and update the `goto` to jump to the next instruction.
+
+                if idx == 0 {
+                    // If the `objc_retain` is the first instruction in the function, `lr` is already set.
+                    // TODO: What should we rewrite this to? See `_MecabraCandidateRetain` in libmecabra.dylib.
+                    log::error!(
+                        "Found goto at first instruction in function: {:#0x}",
+                        instr.address()
+                    );
+                    continue;
+                }
 
                 let Some(prev) =
                     llil.instruction_from_index(LowLevelInstructionIndex(idx - 1 as usize))
@@ -137,17 +158,9 @@ fn process_objc_extras(analysis_context: &AnalysisContext) {
             _ => {}
         }
 
-        let tag_type = analysis_context
-            .view()
-            .tag_type_by_name("Objective-C Extras")
-            .unwrap_or_else(|| {
-                analysis_context
-                    .view()
-                    .create_tag_type("Objective-C Extras", "OC")
-            });
         func.add_tag(
-            &tag_type,
-            "Eliminated Obj-C runtime call",
+            &tag_type_for_view(&analysis_context.view()),
+            "Removed memory management call",
             Some(instr.address()),
             false,
             None,
@@ -157,17 +170,24 @@ fn process_objc_extras(analysis_context: &AnalysisContext) {
 
     if did_replace {
         llil.generate_ssa_form();
+        analysis_context.set_lifted_il_function(&llil);
     }
-    analysis_context.set_lifted_il_function(&llil);
 }
 
 fn register_activity(workflow: Ref<Workflow>) {
     let workflow = workflow.clone_to(workflow.name());
-    let activity = Activity::new_with_action(OBJC_EXTRAS_ACTIVITY_CONFIG, process_objc_extras);
-    workflow.register_activity(&activity).unwrap();
+
+    let memory_management_activity = Activity::new_with_action(
+        OBJC_REMOVE_MEMORY_MANAGMENT_ACTIVITY_CONFIG,
+        remove_memory_management,
+    );
+    workflow
+        .register_activity(&memory_management_activity)
+        .unwrap();
+
     workflow.insert(
         "core.function.generateMediumLevelIL",
-        [OBJC_EXTRAS_ACTIVITY_NAME],
+        [OBJC_REMOVE_MEMORY_MANAGMENT_ACTIVITY_NAME],
     );
     workflow.register().unwrap();
 }
