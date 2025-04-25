@@ -1,0 +1,19 @@
+[package]
+name = "bn-objc-extras"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+binaryninja = { git = "https://github.com/Vector35/binaryninja-api.git", branch = "dev" }
+log = "0.4"
+itertools = "0.13"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.dev]
+panic = "abort"
+build-override.debug = true
+
+[profile.release]
+panic = "abort"
