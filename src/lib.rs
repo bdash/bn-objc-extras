@@ -14,17 +14,10 @@ use binaryninja::{
 };
 use log::LevelFilter;
 
+mod activity;
 mod llil;
 
 const OBJC_REMOVE_MEMORY_MANAGMENT_ACTIVITY_NAME: &str = "bdash.objc-remove-memory-management";
-const OBJC_REMOVE_MEMORY_MANAGMENT_ACTIVITY_CONFIG: &str = r#"{
-    "name": "bdash.objc-remove-memory-management",
-    "title": "Remove Objective-C memory management calls",
-    "description": "Remove calls to objc_retain / objc_release / objc_autorelease to simplify the resulting higher-level ILs",
-    "eligibility": {
-        "auto": {}
-    }
-}"#;
 
 fn tag_type_for_view(
     view: &binaryninja::binary_view::BinaryView,
@@ -174,20 +167,16 @@ fn remove_memory_management(analysis_context: &AnalysisContext) {
     }
 }
 
-fn register_activity(workflow: Ref<Workflow>) {
+fn register_activities(
+    memory_management: &Activity,
+    workflow: Ref<Workflow>,
+) {
     let workflow = workflow.clone_to(workflow.name());
-
-    let memory_management_activity = Activity::new_with_action(
-        OBJC_REMOVE_MEMORY_MANAGMENT_ACTIVITY_CONFIG,
-        remove_memory_management,
-    );
-    workflow
-        .register_activity(&memory_management_activity)
-        .unwrap();
+    workflow.register_activity(memory_management).unwrap();
 
     workflow.insert(
         "core.function.generateMediumLevelIL",
-        [OBJC_REMOVE_MEMORY_MANAGMENT_ACTIVITY_NAME],
+        [memory_management.name()],
     );
     workflow.register().unwrap();
 }
@@ -206,9 +195,30 @@ pub extern "C" fn CorePluginInit() -> bool {
         .with_level(LevelFilter::Debug)
         .init();
 
-    register_activity(Workflow::instance("core.function.metaAnalysis"));
-    register_activity(Workflow::instance("core.function.objectiveC"));
-    register_activity(Workflow::instance("core.function.sharedCache"));
+    let memory_management_config = activity::Config::action(
+        OBJC_REMOVE_MEMORY_MANAGMENT_ACTIVITY_NAME,
+        "Remove Objective-C memory management calls",
+        "Remove calls to objc_retain / objc_release / objc_autorelease to simplify the resulting higher-level ILs",
+    ).with_eligibility(activity::Eligibility::auto_with_default(false));
+
+    let json = serde_json::to_string_pretty(&memory_management_config).unwrap();
+    log::debug!("Registering activity: {}", json);
+
+    let memory_management_activity =
+        Activity::new_with_action(&memory_management_config, remove_memory_management);
+
+    register_activities(
+        &memory_management_activity,
+        Workflow::instance("core.function.metaAnalysis"),
+    );
+    register_activities(
+        &memory_management_activity,
+        Workflow::instance("core.function.objectiveC"),
+    );
+    register_activities(
+        &memory_management_activity,
+        Workflow::instance("core.function.sharedCache"),
+    );
 
     true
 }
