@@ -1,6 +1,7 @@
 use binaryninja::{
     architecture::{Architecture, Register, RegisterInfo},
     binary_view::BinaryViewExt,
+    confidence::Conf,
     logger::Logger,
     low_level_il::{
         LowLevelILRegister,
@@ -9,7 +10,13 @@ use binaryninja::{
         instruction::{InstructionHandler, LowLevelILInstruction, LowLevelInstructionIndex},
         lifting::LowLevelILLabel,
     },
+    medium_level_il::{
+        MediumLevelILFunction, MediumLevelILLiftedInstruction, MediumLevelILLiftedInstructionKind,
+        operation::{Constant, LiftedCallSsa, LiftedLoadSsa},
+    },
     rc::Ref,
+    types::Type,
+    variable::RegisterValueType,
     workflow::{Activity, AnalysisContext, Workflow},
 };
 use log::LevelFilter;
@@ -18,6 +25,7 @@ mod activity;
 mod llil;
 
 const OBJC_REMOVE_MEMORY_MANAGMENT_ACTIVITY_NAME: &str = "bdash.objc-remove-memory-management";
+const OBJC_TYPE_PROPAGATION_ACTIVITY_NAME: &str = "bdash.objc-type-propagation";
 
 fn tag_type_for_view(
     view: &binaryninja::binary_view::BinaryView,
@@ -167,16 +175,235 @@ fn remove_memory_management(analysis_context: &AnalysisContext) {
     }
 }
 
+const ALLOC_INIT_FUNCTIONS: &[&str] = &[
+    "_objc_alloc_init",
+    "_objc_alloc_initWithZone",
+    "_objc_alloc",
+    "_objc_opt_new",
+    "j__objc_alloc_init",
+    "j__objc_alloc_initWithZone",
+    "j__objc_alloc",
+    "j__objc_opt_new",
+];
+
+fn ssa_variable_value_or_loaded_pointer(
+    function: &MediumLevelILFunction,
+    var: &binaryninja::variable::SSAVariable,
+) -> Option<u64> {
+    let value = function.ssa_variable_value(var);
+    match value.state {
+        RegisterValueType::ConstantPointerValue => Some(value.value as u64),
+        RegisterValueType::UndeterminedValue => {
+            let Some(def) = function.ssa_variable_definition(var) else {
+                return None;
+            };
+            let MediumLevelILLiftedInstructionKind::SetVarSsa(set_var) = def.lift().kind else {
+                return None;
+            };
+
+            let MediumLevelILLiftedInstructionKind::LoadSsa(LiftedLoadSsa { src, .. }) =
+                set_var.src.kind
+            else {
+                return None;
+            };
+            let MediumLevelILLiftedInstructionKind::ConstPtr(Constant {
+                constant: src_memory,
+            }) = src.kind
+            else {
+                return None;
+            };
+
+            Some(src_memory)
+        }
+        _ => None,
+    }
+}
+
+fn return_type_for_alloc_function(
+    function: &MediumLevelILFunction,
+    instr: &MediumLevelILLiftedInstruction,
+    call: &LiftedCallSsa,
+    target_function: &binaryninja::function::Function,
+    view: &binaryninja::binary_view::BinaryView,
+) -> Option<Ref<Type>> {
+    if call.params.len() != 1 {
+        log::debug!(
+            "Call to {} at {:#0x} has {} parameters, expected 1",
+            target_function.symbol().full_name(),
+            instr.address,
+            call.params.len()
+        );
+        return None;
+    }
+    let param = &call.params[0];
+
+    let param = match param.kind {
+        MediumLevelILLiftedInstructionKind::ConstPtr(Constant { constant: param }) => param,
+        MediumLevelILLiftedInstructionKind::VarSsa(var) => {
+            // Could be an indirection through __objc_classrefs
+            if let Some(param) = ssa_variable_value_or_loaded_pointer(function, &var.src) {
+                param
+            } else {
+                log::debug!(
+                    "Could not determine pointer value for variable {var:?} passed as parameter of call to {} at {:#0x}",
+                    target_function.symbol().full_name(),
+                    instr.address
+                );
+                return None;
+            }
+        }
+        _ => {
+            log::warn!(
+                "Unexpected parameter for call to {} at {:#0x}: {param:?}",
+                target_function.symbol().full_name(),
+                instr.address,
+            );
+            return None;
+        }
+    };
+
+    let Some(param_symbol) = view.symbol_by_address(param) else {
+        log::debug!(
+            "No symbol for parameter {param:#0x} of call to {} at {:#0x}",
+            target_function.symbol().full_name(),
+            instr.address
+        );
+        return None;
+    };
+
+    let param_symbol_name = param_symbol.full_name().to_string();
+    let class_name = if param_symbol_name.starts_with("cls_") {
+        &param_symbol_name[4..]
+    } else if param_symbol_name.starts_with("clsRef_") {
+        &param_symbol_name[7..]
+    } else if param_symbol_name.starts_with("_OBJC_CLASS_$_") {
+        &param_symbol_name[14..]
+    } else {
+        log::debug!(
+            "Unrecognized symbol name {param_symbol_name} for parameter of call to {} at {:#0x}",
+            target_function.symbol().full_name(),
+            instr.address
+        );
+        return None;
+    };
+
+    let Some(class_type) = view.type_by_name(class_name) else {
+        log::warn!(
+            "No type found for class {class_name} for parameter of call to {} at {:#0x}",
+            target_function.symbol().full_name(),
+            instr.address
+        );
+        return None;
+    };
+
+    Some(Type::pointer(&target_function.arch(), &class_type))
+}
+
+fn propagate_types(analysis_context: &AnalysisContext) {
+    let Some(mlil) = analysis_context.mlil_function() else {
+        return;
+    };
+    let mlil = mlil.ssa_form();
+
+    let view = analysis_context.view();
+    let func = analysis_context.function();
+
+    for basic_block in &mlil.basic_blocks() {
+        for instr in basic_block.iter() {
+            let lifted = instr.lift();
+            let call = match lifted.kind {
+                MediumLevelILLiftedInstructionKind::CallSsa(ref call) => call,
+                MediumLevelILLiftedInstructionKind::TailcallSsa(ref call) => call,
+                _ => continue,
+            };
+            let MediumLevelILLiftedInstructionKind::ConstPtr(Constant {
+                constant: call_target,
+            }) = call.dest.kind
+            else {
+                continue;
+            };
+
+            // if let Some(_) = analysis_context
+            //     .function()
+            //     .call_type_adjustment(instr.address, None)
+            // {
+            //     log::debug!(
+            //         "Call at {:#0x} already has a call type adjustment",
+            //         instr.address
+            //     );
+            //     continue;
+            // }
+
+            let Some(target_function) =
+                view.function_at(&analysis_context.function().platform(), call_target)
+            else {
+                log::debug!(
+                    "No target function found for call to {call_target:#0x} at {:#0x}",
+                    instr.address
+                );
+                continue;
+            };
+
+            let function_name = target_function.symbol().full_name().to_string();
+            let return_type = if ALLOC_INIT_FUNCTIONS.contains(&function_name.as_str()) {
+                return_type_for_alloc_function(&mlil, &lifted, call, &target_function, &view)
+            } else {
+                continue;
+            };
+            let Some(return_type) = return_type else {
+                log::debug!(
+                    "Could not determine new return type for call to {call_target:#0x} at {:#0x}",
+                    instr.address
+                );
+                continue;
+            };
+
+            log::info!(
+                "Overriding return type of call to {function_name} at {:#0x} to {:?}",
+                instr.address,
+                return_type.to_string()
+            );
+
+            let new_function_type = Type::function(
+                &return_type,
+                target_function.function_type().parameters().unwrap(),
+                target_function
+                    .function_type()
+                    .has_variable_arguments()
+                    .contents,
+            );
+            func.set_auto_call_type_adjustment(
+                instr.address,
+                Conf::new(&*new_function_type, 96),
+                None,
+            );
+            func.add_tag(
+                &tag_type_for_view(&view),
+                "Adjusted return type of runtime call",
+                Some(instr.address),
+                false,
+                None,
+            );
+        }
+    }
+}
+
 fn register_activities(
     memory_management: &Activity,
+    type_propagation: &Activity,
     workflow: Ref<Workflow>,
 ) {
     let workflow = workflow.clone_to(workflow.name());
     workflow.register_activity(memory_management).unwrap();
+    workflow.register_activity(type_propagation).unwrap();
 
     workflow.insert(
         "core.function.generateMediumLevelIL",
         [memory_management.name()],
+    );
+    workflow.insert_after(
+        "core.function.analyzeConstantReferences",
+        [type_propagation.name()],
     );
     workflow.register().unwrap();
 }
@@ -201,22 +428,38 @@ pub extern "C" fn CorePluginInit() -> bool {
         "Remove calls to objc_retain / objc_release / objc_autorelease to simplify the resulting higher-level ILs",
     ).with_eligibility(activity::Eligibility::auto_with_default(false));
 
+    let type_propagation_config = activity::Config::action(
+        OBJC_TYPE_PROPAGATION_ACTIVITY_NAME,
+        "Propagate Objective-C types",
+        "Propagate Objective-C types to the IL",
+    )
+    .with_eligibility(
+        // Currently disabled in DSCView due to https://github.com/Vector35/binaryninja-api/issues/6737
+        activity::Eligibility::auto_with_default(false)
+            .with_predicate(activity::ViewType::NotIn(&["DSCView"])),
+    );
+
     let json = serde_json::to_string_pretty(&memory_management_config).unwrap();
     log::debug!("Registering activity: {}", json);
 
     let memory_management_activity =
         Activity::new_with_action(&memory_management_config, remove_memory_management);
+    let type_propagation_activity =
+        Activity::new_with_action(&type_propagation_config, propagate_types);
 
     register_activities(
         &memory_management_activity,
+        &type_propagation_activity,
         Workflow::instance("core.function.metaAnalysis"),
     );
     register_activities(
         &memory_management_activity,
+        &type_propagation_activity,
         Workflow::instance("core.function.objectiveC"),
     );
     register_activities(
         &memory_management_activity,
+        &type_propagation_activity,
         Workflow::instance("core.function.sharedCache"),
     );
 
