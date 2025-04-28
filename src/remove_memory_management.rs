@@ -11,7 +11,7 @@ use binaryninja::{
     workflow::AnalysisContext,
 };
 
-use crate::llil;
+use bn_bdash_extras::llil;
 
 // j_ prefixes are for stub functions in the dyld shared cache.
 // The prefix is added by Binary Ninja's shared cache workflow.

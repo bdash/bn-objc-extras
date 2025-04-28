@@ -6,9 +6,7 @@ use binaryninja::{
 };
 use log::LevelFilter;
 
-// TODO: Extract these into a helper crate
-mod activity;
-mod llil;
+use bn_bdash_extras::activity;
 
 mod remove_memory_management;
 mod type_propagation;
@@ -74,9 +72,6 @@ pub extern "C" fn CorePluginInit() -> bool {
         activity::Eligibility::auto_with_default(false)
             .with_predicate(activity::ViewType::NotIn(&["DSCView"])),
     );
-
-    let json = serde_json::to_string_pretty(&memory_management_config).unwrap();
-    log::debug!("Registering activity: {}", json);
 
     let memory_management_activity =
         Activity::new_with_action(&memory_management_config, remove_memory_management::action);

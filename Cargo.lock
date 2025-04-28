@@ -57,14 +57,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
 
 [[package]]
-name = "bn-objc-extras"
+name = "bn-bdash-extras"
 version = "0.1.0"
+source = "git+https://github.com/bdash/bn-bdash-extras?branch=dev#6bbcf29461879ebfe5915da5cf6a78a71a329763"
 dependencies = [
  "binaryninja",
  "itertools",
  "log",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "bn-objc-extras"
+version = "0.1.0"
+dependencies = [
+ "binaryninja",
+ "bn-bdash-extras",
+ "itertools",
+ "log",
 ]
 
 [[package]]
