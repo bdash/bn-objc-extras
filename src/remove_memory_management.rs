@@ -22,12 +22,14 @@ const IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS: &[&str] = &[
     "_objc_retain",
     "_objc_retainAutorelease",
     "_objc_retainAutoreleasedReturnValue",
+    "_objc_unsafeClaimAutoreleasedReturnValue",
     "j__objc_autorelease",
     "j__objc_autoreleaseReturnValue",
     "j__objc_release",
     "j__objc_retain",
     "j__objc_retainAutorelease",
     "j__objc_retainAutoreleasedReturnValue",
+    "j__objc_unsafeClaimAutoreleasedReturnValue",
 ];
 
 fn is_call_to_ignorable_memory_management_function<'func, A, M, F>(
