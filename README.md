@@ -32,7 +32,7 @@ basis via the `Function Analysis` context menu. If you're brave, you can enable 
 
 ## Details
 
-### Remove Objective-C Memory Management Calls
+### Remove Objective-C Reference Counting Calls
 
 This pass detects and removes calls to Objective-C runtime functions that deal purely with the reference count
 of an object. Detected calls include:
@@ -58,6 +58,17 @@ on in these cases.
 One common case of this is when an instance variable is loaded from an object and them immediately passed to `objc_release`
 without otherwise being used. The only use of the variable is removed, but Binary Ninja preserves and displays the load
 of the instance variable.
+
+### Propagate Types from `[super init…]`
+
+This pass detects calls to `[super init…]` and overrides the return type of each call to the static type of `self` that is
+encoded in the `objc_super` struct that is passed to `objc_msgSendSuper2`.
+
+When combined with removing Objective-C reference counting, this can significantly clean up the bodies of `-init` methods.
+
+| Before | After |
+|--------|-------|
+| ![Before](.images/super-init-before.png "Before") | ![After](.images/super-init-after.png "After") |
 
 ### Propagate Types from Objective-C Runtime Calls
 

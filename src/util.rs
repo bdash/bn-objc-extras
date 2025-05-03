@@ -14,3 +14,11 @@ pub(crate) fn class_name_from_symbol_name(symbol_name: &BStr) -> Option<&BStr> {
         return None;
     })
 }
+
+pub(crate) fn selector_name_from_symbol_name(symbol_name: &BStr) -> Option<&BStr> {
+    Some(if symbol_name.starts_with(b"sel_") {
+        &symbol_name[4..]
+    } else {
+        return None;
+    })
+}
