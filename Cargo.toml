@@ -8,6 +8,7 @@ binaryninja = { git = "https://github.com/Vector35/binaryninja-api.git", branch 
 log = "0.4"
 itertools = "0.13"
 bn-bdash-extras = { git = "https://github.com/bdash/bn-bdash-extras", branch = "dev" }
+bstr = "1.12.0"
 
 [lib]
 crate-type = ["cdylib"]

@@ -10,20 +10,21 @@ use binaryninja::{
     variable::RegisterValueType,
     workflow::AnalysisContext,
 };
+use bstr::{BStr, ByteSlice};
 
 // j_ prefixes are for stub functions in the dyld shared cache.
 // The prefix is added by Binary Ninja's shared cache workflow.
-const ALLOC_INIT_FUNCTIONS: &[&str] = &[
-    "_objc_alloc_init",
-    "_objc_alloc_initWithZone",
-    "_objc_alloc",
-    "_objc_allocWithZone",
-    "_objc_opt_new",
-    "j__objc_alloc_init",
-    "j__objc_alloc_initWithZone",
-    "j__objc_alloc",
-    "j__objc_allocWithZone",
-    "j__objc_opt_new",
+const ALLOC_INIT_FUNCTIONS: &[&[u8]] = &[
+    b"_objc_alloc_init",
+    b"_objc_alloc_initWithZone",
+    b"_objc_alloc",
+    b"_objc_allocWithZone",
+    b"_objc_opt_new",
+    b"j__objc_alloc_init",
+    b"j__objc_alloc_initWithZone",
+    b"j__objc_alloc",
+    b"j__objc_allocWithZone",
+    b"j__objc_opt_new",
 ];
 
 fn ssa_variable_value_or_loaded_pointer(
@@ -87,25 +88,28 @@ fn return_type_for_alloc_function(
         return None;
     };
 
-    let param_symbol_name = param_symbol.full_name().to_string();
-    let Some(class_name) = class_name_from_symbol_name(&param_symbol_name) else { return None };
+    let param_symbol_name = param_symbol.full_name();
+    let Some(class_name) = class_name_from_symbol_name(&param_symbol_name.as_bytes().as_bstr())
+    else {
+        return None;
+    };
 
-    let Some(class_type) = view.type_by_name(class_name) else {
+    let Some(class_type) = view.type_by_name(class_name.to_str_lossy()) else {
         return None;
     };
 
     Some(Type::pointer(&target_function.arch(), &class_type))
 }
 
-fn class_name_from_symbol_name(symbol_name: &str) -> Option<&str> {
+fn class_name_from_symbol_name(symbol_name: &BStr) -> Option<&BStr> {
     // The symbol name for the `objc_class_t` can have different names depending
     // on factors such as being local or external, and whether the reference
     // is from the shared cache or a standalone Mach-O file.
-    Some(if symbol_name.starts_with("cls_") {
+    Some(if symbol_name.starts_with(b"cls_") {
         &symbol_name[4..]
-    } else if symbol_name.starts_with("clsRef_") {
+    } else if symbol_name.starts_with(b"clsRef_") {
         &symbol_name[7..]
-    } else if symbol_name.starts_with("_OBJC_CLASS_$_") {
+    } else if symbol_name.starts_with(b"_OBJC_CLASS_$_") {
         &symbol_name[14..]
     } else {
         return None;
@@ -142,8 +146,8 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
                 continue;
             };
 
-            let function_name = target_function.symbol().full_name().to_string();
-            let return_type = if ALLOC_INIT_FUNCTIONS.contains(&function_name.as_str()) {
+            let function_name = target_function.symbol().full_name();
+            let return_type = if ALLOC_INIT_FUNCTIONS.contains(&function_name.as_bytes()) {
                 return_type_for_alloc_function(&mlil, &lifted, call, &target_function, &view)
             } else {
                 continue;

@@ -15,21 +15,21 @@ use bn_bdash_extras::llil;
 
 // j_ prefixes are for stub functions in the dyld shared cache.
 // The prefix is added by Binary Ninja's shared cache workflow.
-const IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS: &[&str] = &[
-    "_objc_autorelease",
-    "_objc_autoreleaseReturnValue",
-    "_objc_release",
-    "_objc_retain",
-    "_objc_retainAutorelease",
-    "_objc_retainAutoreleasedReturnValue",
-    "_objc_unsafeClaimAutoreleasedReturnValue",
-    "j__objc_autorelease",
-    "j__objc_autoreleaseReturnValue",
-    "j__objc_release",
-    "j__objc_retain",
-    "j__objc_retainAutorelease",
-    "j__objc_retainAutoreleasedReturnValue",
-    "j__objc_unsafeClaimAutoreleasedReturnValue",
+const IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS: &[&[u8]] = &[
+    b"_objc_autorelease",
+    b"_objc_autoreleaseReturnValue",
+    b"_objc_release",
+    b"_objc_retain",
+    b"_objc_retainAutorelease",
+    b"_objc_retainAutoreleasedReturnValue",
+    b"_objc_unsafeClaimAutoreleasedReturnValue",
+    b"j__objc_autorelease",
+    b"j__objc_autoreleaseReturnValue",
+    b"j__objc_release",
+    b"j__objc_retain",
+    b"j__objc_retainAutorelease",
+    b"j__objc_retainAutoreleasedReturnValue",
+    b"j__objc_unsafeClaimAutoreleasedReturnValue",
 ];
 
 fn is_call_to_ignorable_memory_management_function<'func, A, M, F>(
@@ -55,7 +55,7 @@ where
         return false;
     };
 
-    IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS.contains(&symbol.full_name().as_str())
+    IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS.contains(&symbol.full_name().as_bytes())
 }
 
 pub(crate) fn action(analysis_context: &AnalysisContext) {
