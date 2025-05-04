@@ -10,6 +10,7 @@ use bn_bdash_extras::activity;
 
 mod remove_memory_management;
 mod type_propagation;
+mod util;
 
 const OBJC_REMOVE_MEMORY_MANAGMENT_ACTIVITY_NAME: &str = "bdash.objc-remove-memory-management";
 const OBJC_TYPE_PROPAGATION_ACTIVITY_NAME: &str = "bdash.objc-type-propagation";

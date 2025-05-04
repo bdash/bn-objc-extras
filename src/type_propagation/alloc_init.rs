@@ -1,6 +1,7 @@
 use binaryninja::{
-    binary_view::BinaryViewExt as _,
+    binary_view::{BinaryView, BinaryViewExt as _},
     confidence::Conf,
+    function::Function,
     medium_level_il::{
         MediumLevelILFunction, MediumLevelILLiftedInstruction, MediumLevelILLiftedInstructionKind,
         operation::{Constant, LiftedCallSsa, LiftedLoadSsa},
@@ -10,7 +11,9 @@ use binaryninja::{
     variable::RegisterValueType,
     workflow::AnalysisContext,
 };
-use bstr::{BStr, ByteSlice};
+use bstr::ByteSlice;
+
+use crate::util;
 
 // j_ prefixes are for stub functions in the dyld shared cache.
 // The prefix is added by Binary Ninja's shared cache workflow.
@@ -35,9 +38,7 @@ fn ssa_variable_value_or_loaded_pointer(
     match value.state {
         RegisterValueType::ConstantPointerValue => Some(value.value as u64),
         RegisterValueType::UndeterminedValue => {
-            let Some(def) = function.ssa_variable_definition(var) else {
-                return None;
-            };
+            let def = function.ssa_variable_definition(var)?;
             let MediumLevelILLiftedInstructionKind::SetVarSsa(set_var) = def.lift().kind else {
                 return None;
             };
@@ -47,6 +48,7 @@ fn ssa_variable_value_or_loaded_pointer(
             else {
                 return None;
             };
+
             let MediumLevelILLiftedInstructionKind::ConstPtr(Constant {
                 constant: src_memory,
             }) = src.kind
@@ -61,22 +63,20 @@ fn ssa_variable_value_or_loaded_pointer(
 }
 
 fn return_type_for_alloc_function(
-    function: &MediumLevelILFunction,
-    _instr: &MediumLevelILLiftedInstruction,
+    instr: &MediumLevelILLiftedInstruction,
     call: &LiftedCallSsa,
-    target_function: &binaryninja::function::Function,
-    view: &binaryninja::binary_view::BinaryView,
+    target_function: &Function,
+    view: &BinaryView,
 ) -> Option<Ref<Type>> {
     if call.params.len() != 1 {
         return None;
     }
-    let param = &call.params[0];
 
-    let param = match param.kind {
+    let param = match call.params[0].kind {
         MediumLevelILLiftedInstructionKind::ConstPtr(Constant { constant: param }) => param,
         MediumLevelILLiftedInstructionKind::VarSsa(var) => {
             // Could be an indirection through __objc_classrefs
-            match ssa_variable_value_or_loaded_pointer(function, &var.src) {
+            match ssa_variable_value_or_loaded_pointer(&instr.function, &var.src) {
                 Some(param) => param,
                 None => return None,
             }
@@ -84,98 +84,73 @@ fn return_type_for_alloc_function(
         _ => return None,
     };
 
-    let Some(param_symbol) = view.symbol_by_address(param) else {
-        return None;
-    };
+    let param_symbol_name = view.symbol_by_address(param)?.full_name();
+    let class_name =
+        util::class_name_from_symbol_name(&param_symbol_name.as_bytes_with_null().as_bstr())?;
 
-    let param_symbol_name = param_symbol.full_name();
-    let Some(class_name) = class_name_from_symbol_name(&param_symbol_name.as_bytes_with_null().as_bstr())
-    else {
-        return None;
-    };
-
-    let Some(class_type) = view.type_by_name(class_name.to_str_lossy()) else {
-        return None;
-    };
+    let class_type = view.type_by_name(class_name.to_str_lossy())?;
 
     Some(Type::pointer(&target_function.arch(), &class_type))
 }
 
-fn class_name_from_symbol_name(symbol_name: &BStr) -> Option<&BStr> {
-    // The symbol name for the `objc_class_t` can have different names depending
-    // on factors such as being local or external, and whether the reference
-    // is from the shared cache or a standalone Mach-O file.
-    Some(if symbol_name.starts_with(b"cls_") {
-        &symbol_name[4..]
-    } else if symbol_name.starts_with(b"clsRef_") {
-        &symbol_name[7..]
-    } else if symbol_name.starts_with(b"_OBJC_CLASS_$_") {
-        &symbol_name[14..]
-    } else {
+fn process_instruction(instr: MediumLevelILLiftedInstruction, view: &BinaryView) -> Option<()> {
+    let call = match instr.kind {
+        MediumLevelILLiftedInstructionKind::CallSsa(ref call) => call,
+        MediumLevelILLiftedInstructionKind::TailcallSsa(ref call) => call,
+        _ => return None,
+    };
+
+    let MediumLevelILLiftedInstructionKind::ConstPtr(Constant {
+        constant: call_target,
+    }) = call.dest.kind
+    else {
         return None;
-    })
+    };
+
+    let target_function = view.function_at(&instr.function.function().platform(), call_target)?;
+
+    let function_name = target_function.symbol().full_name();
+    if !ALLOC_INIT_FUNCTIONS.contains(&function_name.as_bytes_with_null()) {
+        return None;
+    }
+
+    let return_type = return_type_for_alloc_function(&instr, call, &target_function, view)?;
+
+    let target_function_type = target_function.function_type();
+    let function_call_type = Type::function(
+        &return_type,
+        target_function_type.parameters().unwrap(),
+        target_function_type.has_variable_arguments().contents,
+    );
+
+    let function = instr.function.function();
+    function.set_auto_call_type_adjustment(
+        instr.address,
+        Conf::new(&*function_call_type, 96),
+        None,
+    );
+    function.add_tag(
+        &crate::tag_type_for_view(view),
+        "Adjusted return type of alloc / init call",
+        Some(instr.address),
+        false,
+        None,
+    );
+
+    Some(())
 }
 
 pub(crate) fn action(analysis_context: &AnalysisContext) {
     let Some(mlil) = analysis_context.mlil_function() else {
         return;
     };
-    let mlil = mlil.ssa_form();
 
+    let mlil_ssa = mlil.ssa_form();
     let view = analysis_context.view();
-    let func = analysis_context.function();
 
-    for basic_block in &mlil.basic_blocks() {
+    for basic_block in &mlil_ssa.basic_blocks() {
         for instr in basic_block.iter() {
-            let lifted = instr.lift();
-            let call = match lifted.kind {
-                MediumLevelILLiftedInstructionKind::CallSsa(ref call) => call,
-                MediumLevelILLiftedInstructionKind::TailcallSsa(ref call) => call,
-                _ => continue,
-            };
-            let MediumLevelILLiftedInstructionKind::ConstPtr(Constant {
-                constant: call_target,
-            }) = call.dest.kind
-            else {
-                continue;
-            };
-
-            let Some(target_function) =
-                view.function_at(&analysis_context.function().platform(), call_target)
-            else {
-                continue;
-            };
-
-            let function_name = target_function.symbol().full_name();
-            let return_type = if ALLOC_INIT_FUNCTIONS.contains(&function_name.as_bytes_with_null()) {
-                return_type_for_alloc_function(&mlil, &lifted, call, &target_function, &view)
-            } else {
-                continue;
-            };
-            let Some(return_type) = return_type else {
-                continue;
-            };
-
-            let new_function_type = Type::function(
-                &return_type,
-                target_function.function_type().parameters().unwrap(),
-                target_function
-                    .function_type()
-                    .has_variable_arguments()
-                    .contents,
-            );
-            func.set_auto_call_type_adjustment(
-                instr.address,
-                Conf::new(&*new_function_type, 96),
-                None,
-            );
-            func.add_tag(
-                &crate::tag_type_for_view(&view),
-                "Adjusted return type of runtime call",
-                Some(instr.address),
-                false,
-                None,
-            );
+            process_instruction(instr.lift(), &view);
         }
     }
 }
