@@ -89,7 +89,7 @@ fn return_type_for_alloc_function(
     };
 
     let param_symbol_name = param_symbol.full_name();
-    let Some(class_name) = class_name_from_symbol_name(&param_symbol_name.as_bytes().as_bstr())
+    let Some(class_name) = class_name_from_symbol_name(&param_symbol_name.as_bytes_with_null().as_bstr())
     else {
         return None;
     };
@@ -147,7 +147,7 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
             };
 
             let function_name = target_function.symbol().full_name();
-            let return_type = if ALLOC_INIT_FUNCTIONS.contains(&function_name.as_bytes()) {
+            let return_type = if ALLOC_INIT_FUNCTIONS.contains(&function_name.as_bytes_with_null()) {
                 return_type_for_alloc_function(&mlil, &lifted, call, &target_function, &view)
             } else {
                 continue;

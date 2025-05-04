@@ -54,8 +54,7 @@ where
     let Some(symbol) = view.symbol_by_address(target) else {
         return false;
     };
-
-    IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS.contains(&symbol.full_name().as_bytes())
+    IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS.contains(&symbol.full_name().as_bytes_with_null())
 }
 
 pub(crate) fn action(analysis_context: &AnalysisContext) {
