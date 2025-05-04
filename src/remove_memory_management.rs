@@ -22,6 +22,7 @@ const IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS: &[&[u8]] = &[
     b"_objc_retain",
     b"_objc_retainAutorelease",
     b"_objc_retainAutoreleasedReturnValue",
+    b"_objc_retainBlock",
     b"_objc_unsafeClaimAutoreleasedReturnValue",
     b"j__objc_autorelease",
     b"j__objc_autoreleaseReturnValue",
@@ -29,6 +30,7 @@ const IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS: &[&[u8]] = &[
     b"j__objc_retain",
     b"j__objc_retainAutorelease",
     b"j__objc_retainAutoreleasedReturnValue",
+    b"j__objc_retainBlock",
     b"j__objc_unsafeClaimAutoreleasedReturnValue",
 ];
 
