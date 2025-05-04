@@ -82,17 +82,24 @@ pub(crate) fn adjust_return_type_of_call(
     view: &BinaryView,
     tag_description: &str,
 ) {
-    let target_function_type = call.target.function_type();
-    let function_call_type = Type::function(
+    let function = call.instr.function.function();
+    let target_function_type = if let Some(existing_call_type_adjustment) =
+        function.call_type_adjustment(call.instr.address, None)
+    {
+        existing_call_type_adjustment.contents
+    } else {
+        call.target.function_type()
+    };
+
+    let adjusted_call_type = Type::function(
         &return_type,
         target_function_type.parameters().unwrap(),
         target_function_type.has_variable_arguments().contents,
     );
 
-    let function = call.instr.function.function();
     function.set_auto_call_type_adjustment(
         call.instr.address,
-        Conf::new(&*function_call_type, 96),
+        Conf::new(&*adjusted_call_type, 192),
         None,
     );
     function.add_tag(
