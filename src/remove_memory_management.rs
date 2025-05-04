@@ -145,6 +145,5 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
 
     if did_replace {
         llil.generate_ssa_form();
-        analysis_context.set_lifted_il_function(&llil);
     }
 }
