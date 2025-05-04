@@ -1,3 +1,15 @@
+use binaryninja::{
+    binary_view::{BinaryView, BinaryViewExt as _},
+    confidence::Conf,
+    function::Function,
+    medium_level_il::{
+        MediumLevelILFunction, MediumLevelILLiftedInstruction, MediumLevelILLiftedInstructionKind,
+        operation::{Constant, LiftedCallSsa, LiftedLoadSsa},
+    },
+    rc::Ref,
+    types::Type,
+    variable::{RegisterValueType, SSAVariable},
+};
 use bstr::BStr;
 
 pub(crate) fn class_name_from_symbol_name(symbol_name: &BStr) -> Option<&BStr> {
@@ -21,4 +33,114 @@ pub(crate) fn selector_name_from_symbol_name(symbol_name: &BStr) -> Option<&BStr
     } else {
         return None;
     })
+}
+
+pub(crate) struct Call<'a> {
+    pub instr: &'a MediumLevelILLiftedInstruction,
+    pub call: &'a LiftedCallSsa,
+    pub target: Ref<Function>,
+}
+
+/// Returns a `Call` if `instr` is a call or tail call to a function whose name appears in `function_names`
+pub(crate) fn match_call_to_function_named<'a>(
+    instr: &'a MediumLevelILLiftedInstruction,
+    view: &'a BinaryView,
+    function_names: &'a [&[u8]],
+) -> Option<Call<'a>> {
+    let call = match instr.kind {
+        MediumLevelILLiftedInstructionKind::CallSsa(ref call) => call,
+        MediumLevelILLiftedInstructionKind::TailcallSsa(ref call) => call,
+        _ => return None,
+    };
+
+    let MediumLevelILLiftedInstructionKind::ConstPtr(Constant {
+        constant: call_target,
+    }) = call.dest.kind
+    else {
+        return None;
+    };
+
+    let target_function = view.function_at(&instr.function.function().platform(), call_target)?;
+    let function_name = target_function.symbol().full_name();
+    if !function_names.contains(&function_name.as_bytes()) {
+        return None;
+    }
+
+    Some(Call {
+        instr,
+        call,
+        target: target_function,
+    })
+}
+
+/// Adjust the return type of the call represented by `call`
+///
+/// A tag is added at the call instruction with the given description.
+pub(crate) fn adjust_return_type_of_call(
+    call: &Call<'_>,
+    return_type: Ref<Type>,
+    view: &BinaryView,
+    tag_description: &str,
+) {
+    let target_function_type = call.target.function_type();
+    let function_call_type = Type::function(
+        &return_type,
+        target_function_type.parameters().unwrap(),
+        target_function_type.has_variable_arguments().contents,
+    );
+
+    let function = call.instr.function.function();
+    function.set_auto_call_type_adjustment(
+        call.instr.address,
+        Conf::new(&*function_call_type, 96),
+        None,
+    );
+    function.add_tag(
+        &crate::tag_type_for_view(view),
+        tag_description,
+        Some(call.instr.address),
+        false,
+        None,
+    );
+}
+
+fn ssa_variable_value_or_load_of_constant_pointer(
+    function: &MediumLevelILFunction,
+    var: &SSAVariable,
+) -> Option<u64> {
+    let value = function.ssa_variable_value(var);
+    match value.state {
+        RegisterValueType::ConstantPointerValue => return Some(value.value as u64),
+        RegisterValueType::UndeterminedValue => {}
+        _ => return None,
+    }
+
+    let def = function.ssa_variable_definition(var)?;
+    let MediumLevelILLiftedInstructionKind::SetVarSsa(set_var) = def.lift().kind else {
+        return None;
+    };
+
+    let MediumLevelILLiftedInstructionKind::LoadSsa(LiftedLoadSsa { src, .. }) = set_var.src.kind
+    else {
+        return None;
+    };
+
+    match src.kind {
+        MediumLevelILLiftedInstructionKind::ConstPtr(Constant { constant }) => Some(constant),
+        _ => None,
+    }
+}
+
+/// If `instr` is a constant pointer or is a variable whose value is loaded from a constant pointer,
+/// return that pointer address.
+pub(crate) fn match_constant_pointer_or_load_of_constant_pointer(
+    instr: &MediumLevelILLiftedInstruction,
+) -> Option<u64> {
+    match instr.kind {
+        MediumLevelILLiftedInstructionKind::ConstPtr(Constant { constant }) => Some(constant),
+        MediumLevelILLiftedInstructionKind::VarSsa(var) => {
+            ssa_variable_value_or_load_of_constant_pointer(&instr.function, &var.src)
+        }
+        _ => None,
+    }
 }

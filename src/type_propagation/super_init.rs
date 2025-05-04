@@ -1,16 +1,14 @@
 use binaryninja::{
-    binary_view::BinaryViewExt as _,
-    confidence::Conf,
+    binary_view::{BinaryView, BinaryViewExt as _},
     medium_level_il::{
-        MediumLevelILFunction, MediumLevelILLiftedInstruction, MediumLevelILLiftedInstructionKind,
-        operation::{Constant, LiftedCallSsa, LiftedSetVarSsa, LiftedSetVarSsaField, Var, VarSsa},
+        MediumLevelILLiftedInstruction, MediumLevelILLiftedInstructionKind,
+        operation::{Constant, LiftedSetVarSsa, LiftedSetVarSsaField, Var, VarSsa},
     },
     rc::Ref,
     types::Type,
     workflow::AnalysisContext,
 };
 use bstr::ByteSlice as _;
-use itertools::Itertools as _;
 
 use crate::util;
 
@@ -23,39 +21,23 @@ const OBJC_MSG_SEND_SUPER_FUNCTIONS: &[&[u8]] = &[
     b"j__objc_msgSendSuper2",
 ];
 
-fn return_type_for_super_call(
-    function: &MediumLevelILFunction,
-    _instr: &MediumLevelILLiftedInstruction,
-    call: &LiftedCallSsa,
-    target_function: &binaryninja::function::Function,
-    view: &binaryninja::binary_view::BinaryView,
-) -> Option<Ref<Type>> {
+fn return_type_for_super_call(call: &util::Call, view: &BinaryView) -> Option<Ref<Type>> {
     // Expecting to see at least `objc_super` and a selector.
-    if call.params.len() > 2 {
+    if call.call.params.len() > 2 {
         return None;
     }
 
-    let selector_param = &call.params[1];
-    let selector_param = match selector_param.kind {
-        MediumLevelILLiftedInstructionKind::ConstPtr(Constant { constant: param }) => param,
-        _ => return None,
-    };
+    let selector_addr =
+        util::match_constant_pointer_or_load_of_constant_pointer(&call.call.params[1])?;
+    let selector_symbol_name = view.symbol_by_address(selector_addr)?.full_name();
+    let selector_name =
+        util::selector_name_from_symbol_name(&selector_symbol_name.as_bytes().as_bstr())?;
 
-    let Some(selector_symbol) = view.symbol_by_address(selector_param) else {
-        return None;
-    };
-
-    let selector_symbol_name = selector_symbol.full_name();
-    let Some(selector_name) =
-        util::selector_name_from_symbol_name(&selector_symbol_name.as_bytes().as_bstr())
-    else {
-        return None;
-    };
     if !selector_name.starts_with(b"init") {
         return None;
     }
 
-    let super_param = &call.params[0];
+    let super_param = &call.call.params[0];
     let MediumLevelILLiftedInstructionKind::VarSsa(VarSsa { src }) = super_param.kind else {
         log::debug!(
             "Unhandled super paramater format at {:#0x} {:?}",
@@ -65,9 +47,9 @@ fn return_type_for_super_call(
         return None;
     };
 
-    // Parameter is an SSA varaible. Find its definitions to find when it was assigned.
+    // Parameter is an SSA variable. Find its definitions to find when it was assigned.
     // From there we can determine the values it was assigned.
-    let Some(def) = function.ssa_variable_definition(&src) else {
+    let Some(def) = call.instr.function.ssa_variable_definition(&src) else {
         log::debug!("  could not find definition of variable?");
         return None;
     };
@@ -89,7 +71,9 @@ fn return_type_for_super_call(
     };
 
     // `src_var` is a `struct objc_super`. Find constant values assigned to the `super_class` field (offset 8).
-    let super_class_constants = function
+    let super_class_constants: Vec<_> = call
+        .instr
+        .function
         .var_definitions(&src_var)
         .into_iter()
         .filter_map(|def| {
@@ -109,7 +93,7 @@ fn return_type_for_super_call(
             };
             Some(constant)
         })
-        .collect_vec();
+        .collect();
 
     // In the common case there are either zero or one assignments to the `super_class` field.
     // If there are zero, that likely means the assigned value was not a constant. Handling
@@ -144,70 +128,33 @@ fn return_type_for_super_call(
         return None;
     };
 
-    Some(Type::pointer(&target_function.arch(), &class_type))
+    Some(Type::pointer(&call.target.arch(), &class_type))
+}
+
+fn process_instruction(instr: MediumLevelILLiftedInstruction, view: &BinaryView) -> Option<()> {
+    let call = util::match_call_to_function_named(&instr, view, OBJC_MSG_SEND_SUPER_FUNCTIONS)?;
+
+    util::adjust_return_type_of_call(
+        &call,
+        return_type_for_super_call(&call, view)?,
+        view,
+        "Adjusted return type of super init call",
+    );
+
+    Some(())
 }
 
 pub(crate) fn action(analysis_context: &AnalysisContext) {
     let Some(mlil) = analysis_context.mlil_function() else {
         return;
     };
-    let mlil = mlil.ssa_form();
 
+    let mlil_ssa = mlil.ssa_form();
     let view = analysis_context.view();
-    let func = analysis_context.function();
 
-    for basic_block in &mlil.basic_blocks() {
+    for basic_block in &mlil_ssa.basic_blocks() {
         for instr in basic_block.iter() {
-            let lifted = instr.lift();
-            let call = match lifted.kind {
-                MediumLevelILLiftedInstructionKind::CallSsa(ref call) => call,
-                MediumLevelILLiftedInstructionKind::TailcallSsa(ref call) => call,
-                _ => continue,
-            };
-            let MediumLevelILLiftedInstructionKind::ConstPtr(Constant {
-                constant: call_target,
-            }) = call.dest.kind
-            else {
-                continue;
-            };
-
-            let Some(target_function) =
-                view.function_at(&analysis_context.function().platform(), call_target)
-            else {
-                continue;
-            };
-
-            let function_name = target_function.symbol().full_name();
-            if !OBJC_MSG_SEND_SUPER_FUNCTIONS.contains(&function_name.as_bytes()) {
-                continue;
-            }
-
-            let Some(return_type) =
-                return_type_for_super_call(&mlil, &lifted, call, &target_function, &view)
-            else {
-                continue;
-            };
-
-            let new_function_type = Type::function(
-                &return_type,
-                target_function.function_type().parameters().unwrap(),
-                target_function
-                    .function_type()
-                    .has_variable_arguments()
-                    .contents,
-            );
-            func.set_auto_call_type_adjustment(
-                instr.address,
-                Conf::new(&*new_function_type, 96),
-                None,
-            );
-            func.add_tag(
-                &crate::tag_type_for_view(&view),
-                "Adjusted return type of super init call",
-                Some(instr.address),
-                false,
-                None,
-            );
+            process_instruction(instr.lift(), &view);
         }
     }
 }
