@@ -23,7 +23,7 @@ const OBJC_MSG_SEND_SUPER_FUNCTIONS: &[&[u8]] = &[
 
 fn return_type_for_super_call(call: &util::Call, view: &BinaryView) -> Option<Ref<Type>> {
     // Expecting to see at least `objc_super` and a selector.
-    if call.call.params.len() > 2 {
+    if call.call.params.len() < 2 {
         return None;
     }
 
