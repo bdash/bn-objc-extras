@@ -160,7 +160,7 @@ fn return_type_for_super_call(call: &util::Call, view: &BinaryView) -> Option<Re
         return None;
     };
 
-    Some(Type::pointer(&call.target.arch(), &class_type))
+    Some(Type::pointer(&call.arch, &class_type))
 }
 
 fn process_instruction(instr: &MediumLevelILLiftedInstruction, view: &BinaryView) -> Option<()> {

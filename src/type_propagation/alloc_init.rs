@@ -35,7 +35,7 @@ fn return_type_for_alloc_call(call: &util::Call<'_>, view: &BinaryView) -> Optio
     let class_name = util::class_name_from_symbol_name(class_symbol_name.to_bytes().as_bstr())?;
 
     let class_type = view.type_by_name(class_name.to_str().ok()?)?;
-    Some(Type::pointer(&call.target.arch(), &class_type))
+    Some(Type::pointer(&call.arch, &class_type))
 }
 
 fn process_instruction(instr: &MediumLevelILLiftedInstruction, view: &BinaryView) -> Option<()> {

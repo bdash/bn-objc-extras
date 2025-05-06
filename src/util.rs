@@ -1,16 +1,16 @@
 use binaryninja::{
+    architecture::CoreArchitecture,
     binary_view::{BinaryView, BinaryViewExt as _},
     confidence::Conf,
-    function::Function,
     medium_level_il::{
         MediumLevelILFunction, MediumLevelILLiftedInstruction, MediumLevelILLiftedInstructionKind,
         operation::{Constant, LiftedCallSsa, LiftedLoadSsa},
     },
     rc::Ref,
-    types::Type,
+    types::{Type, TypeClass},
     variable::{RegisterValueType, SSAVariable},
 };
-use bstr::BStr;
+use bstr::{BStr, BString};
 
 pub(crate) fn class_name_from_symbol_name(symbol_name: &BStr) -> Option<&BStr> {
     // The symbol name for the `objc_class_t` can have different names depending
@@ -36,10 +36,13 @@ pub(crate) fn selector_name_from_symbol_name(symbol_name: &BStr) -> Option<&BStr
 }
 
 #[allow(clippy::struct_field_names)]
+#[allow(unused)]
 pub(crate) struct Call<'a> {
     pub instr: &'a MediumLevelILLiftedInstruction,
     pub call: &'a LiftedCallSsa,
-    pub target: Ref<Function>,
+    pub target_name: BString,
+    pub target_type: Ref<Type>,
+    pub arch: CoreArchitecture,
 }
 
 /// Returns a `Call` if `instr` is a call or tail call to a function whose name appears in `function_names`
@@ -54,23 +57,51 @@ pub(crate) fn match_call_to_function_named<'a>(
         return None;
     };
 
-    let MediumLevelILLiftedInstructionKind::ConstPtr(Constant {
-        constant: call_target,
-    }) = call.dest.kind
-    else {
-        return None;
+    let (target_name, target_type) = match call.dest.kind {
+        MediumLevelILLiftedInstructionKind::ConstPtr(Constant {
+            constant: call_target,
+        }) => {
+            let target_function =
+                view.function_at(&instr.function.function().platform(), call_target)?;
+            let function_name = target_function.symbol().full_name();
+            (function_name, target_function.function_type())
+        }
+        MediumLevelILLiftedInstructionKind::Import(Constant {
+            constant: call_target,
+        }) => {
+            let symbol = view.symbol_by_address(call_target)?;
+            let type_ = view.data_variable_at_address(call_target)?.ty.contents;
+            let type_ = match type_.type_class() {
+                TypeClass::PointerTypeClass => type_.target()?.contents,
+                TypeClass::FunctionTypeClass => type_,
+                _ => return None,
+            };
+
+            if type_.type_class() != TypeClass::FunctionTypeClass {
+                log::warn!(
+                    "{:#0x} Call of an imported function with a non-function type: {:#0x} {:?}",
+                    instr.address,
+                    call_target,
+                    type_.type_class()
+                );
+                return None;
+            }
+
+            (symbol.full_name(), type_)
+        }
+        _ => return None,
     };
 
-    let target_function = view.function_at(&instr.function.function().platform(), call_target)?;
-    let function_name = target_function.symbol().full_name();
-    if !function_names.contains(&function_name.to_bytes()) {
+    if !function_names.contains(&target_name.to_bytes()) {
         return None;
     }
 
     Some(Call {
         instr,
         call,
-        target: target_function,
+        target_name: target_name.to_bytes().into(),
+        target_type,
+        arch: instr.function.function().arch(),
     })
 }
 
@@ -89,7 +120,7 @@ pub(crate) fn adjust_return_type_of_call(
     {
         existing_call_type_adjustment.contents
     } else {
-        call.target.function_type()
+        call.target_type.clone()
     };
 
     let adjusted_call_type = Type::function(
