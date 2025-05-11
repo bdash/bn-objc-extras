@@ -33,7 +33,7 @@ fn return_type_for_alloc_call(call: &util::Call<'_>, view: &BinaryView) -> Optio
         util::match_constant_pointer_or_load_of_constant_pointer(&call.call.params[0])?;
     let class_symbol_name = view.symbol_by_address(class_addr)?.full_name();
     let class_name =
-        util::class_name_from_symbol_name(&class_symbol_name.as_bytes_with_null().as_bstr())?;
+        util::class_name_from_symbol_name(&class_symbol_name.to_bytes().as_bstr())?;
 
     let class_type = view.type_by_name(class_name.to_str().ok()?)?;
     Some(Type::pointer(&call.target.arch(), &class_type))

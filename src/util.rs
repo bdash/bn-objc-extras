@@ -62,7 +62,7 @@ pub(crate) fn match_call_to_function_named<'a>(
 
     let target_function = view.function_at(&instr.function.function().platform(), call_target)?;
     let function_name = target_function.symbol().full_name();
-    if !function_names.contains(&function_name.as_bytes_with_null()) {
+    if !function_names.contains(&function_name.to_bytes()) {
         return None;
     }
 

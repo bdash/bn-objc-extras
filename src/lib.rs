@@ -37,7 +37,7 @@ fn register_activities(
         return;
     }
 
-    let workflow = workflow.clone_to(workflow.name());
+    let workflow = workflow.clone_to(&workflow.name());
     workflow.register_activity(memory_management).unwrap();
     workflow.register_activity(types_alloc_init).unwrap();
     workflow.register_activity(types_super_init).unwrap();
@@ -97,14 +97,16 @@ pub extern "C" fn CorePluginInit() -> bool {
     )
     .with_eligibility(activity::Eligibility::auto());
 
-    let memory_management_activity =
-        Activity::new_with_action(&memory_management_config, remove_memory_management::action);
+    let memory_management_activity = Activity::new_with_action(
+        &memory_management_config.to_string(),
+        remove_memory_management::action,
+    );
     let types_alloc_init_activity = Activity::new_with_action(
-        &types_alloc_init_config,
+        &types_alloc_init_config.to_string(),
         type_propagation::alloc_init::action,
     );
     let types_super_init_activity = Activity::new_with_action(
-        &types_super_init_config,
+        &types_super_init_config.to_string(),
         type_propagation::super_init::action,
     );
 

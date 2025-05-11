@@ -2,7 +2,7 @@ use binaryninja::{
     architecture::{Architecture, Register as _, RegisterInfo as _},
     binary_view::BinaryViewExt as _,
     low_level_il::{
-        LowLevelILRegister,
+        LowLevelILRegisterKind,
         expression::{ExpressionHandler, LowLevelILExpression, ValueExpr},
         function::{FunctionForm, FunctionMutability},
         instruction::{InstructionHandler, LowLevelILInstruction, LowLevelInstructionIndex},
@@ -36,16 +36,15 @@ const IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS: &[&[u8]] = &[
     b"j__objc_unsafeClaimAutoreleasedReturnValue",
 ];
 
-fn is_call_to_ignorable_memory_management_function<'func, A, M, F>(
+fn is_call_to_ignorable_memory_management_function<'func, M, F>(
     view: &binaryninja::binary_view::BinaryView,
-    instr: &'func LowLevelILInstruction<'func, A, M, F>,
+    instr: &'func LowLevelILInstruction<'func, M, F>,
 ) -> bool
 where
-    A: 'func + Architecture + std::fmt::Debug,
     M: FunctionMutability + std::fmt::Debug,
     F: FunctionForm + std::fmt::Debug,
-    LowLevelILInstruction<'func, A, M, F>: InstructionHandler<'func, A, M, F>,
-    LowLevelILExpression<'func, A, M, F, ValueExpr>: ExpressionHandler<'func, A, M, F>,
+    LowLevelILInstruction<'func, M, F>: InstructionHandler<'func, M, F>,
+    LowLevelILExpression<'func, M, F, ValueExpr>: ExpressionHandler<'func, M, F>,
 {
     use llil::{Expression::*, Instruction::*};
 
@@ -58,7 +57,7 @@ where
     let Some(symbol) = view.symbol_by_address(target) else {
         return false;
     };
-    IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS.contains(&symbol.full_name().as_bytes_with_null())
+    IGNORABLE_MEMORY_MANAGEMENT_FUNCTIONS.contains(&symbol.full_name().to_bytes())
 }
 
 pub(crate) fn action(analysis_context: &AnalysisContext) {
@@ -72,7 +71,7 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
         return;
     };
     let link_register_size = link_register.info().size();
-    let link_register = LowLevelILRegister::ArchReg(link_register);
+    let link_register = LowLevelILRegisterKind::Arch(link_register);
 
     let mut did_replace = false;
     for idx in 0..=llil.instruction_count() {

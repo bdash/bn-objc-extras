@@ -31,7 +31,7 @@ fn return_type_for_super_call(call: &util::Call, view: &BinaryView) -> Option<Re
         util::match_constant_pointer_or_load_of_constant_pointer(&call.call.params[1])?;
     let selector_symbol_name = view.symbol_by_address(selector_addr)?.full_name();
     let selector_name =
-        util::selector_name_from_symbol_name(&selector_symbol_name.as_bytes().as_bstr())?;
+        util::selector_name_from_symbol_name(&selector_symbol_name.to_bytes().as_bstr())?;
 
     if !selector_name.starts_with(b"init") {
         return None;
@@ -114,7 +114,7 @@ fn return_type_for_super_call(call: &util::Call, view: &BinaryView) -> Option<Re
 
     let super_class_symbol_name = super_class_symbol.full_name();
     let Some(class_name) =
-        util::class_name_from_symbol_name(&super_class_symbol_name.as_bytes_with_null().as_bstr())
+        util::class_name_from_symbol_name(&super_class_symbol_name.to_bytes().as_bstr())
     else {
         log::debug!(
             "Unable to extract class name from symbol name: {:?}",
