@@ -60,7 +60,7 @@ checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
 [[package]]
 name = "bn-bdash-extras"
 version = "0.1.0"
-source = "git+https://github.com/bdash/bn-bdash-extras?branch=dev#1aec10e31ab485c1814886360154470e03f9b0d0"
+source = "git+https://github.com/bdash/bn-bdash-extras?branch=dev#af3f3e646ad8eb3a4dcf5d8a818bfa4e3e71087c"
 dependencies = [
  "binaryninja",
  "itertools",

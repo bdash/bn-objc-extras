@@ -31,14 +31,17 @@ fn return_type_for_super_call(call: &util::Call, view: &BinaryView) -> Option<Re
         util::match_constant_pointer_or_load_of_constant_pointer(&call.call.params[1])?;
     let selector_symbol_name = view.symbol_by_address(selector_addr)?.full_name();
     let selector_name =
-        util::selector_name_from_symbol_name(&selector_symbol_name.to_bytes().as_bstr())?;
+        util::selector_name_from_symbol_name(selector_symbol_name.to_bytes().as_bstr())?;
 
     if !selector_name.starts_with(b"init") {
         return None;
     }
 
     let super_param = &call.call.params[0];
-    let MediumLevelILLiftedInstructionKind::VarSsa(VarSsa { src }) = super_param.kind else {
+    let MediumLevelILLiftedInstructionKind::VarSsa(VarSsa {
+        src: super_param_var,
+    }) = super_param.kind
+    else {
         log::debug!(
             "Unhandled super paramater format at {:#0x} {:?}",
             super_param.address,
@@ -49,7 +52,11 @@ fn return_type_for_super_call(call: &util::Call, view: &BinaryView) -> Option<Re
 
     // Parameter is an SSA variable. Find its definitions to find when it was assigned.
     // From there we can determine the values it was assigned.
-    let Some(def) = call.instr.function.ssa_variable_definition(&src) else {
+    let Some(def) = call
+        .instr
+        .function
+        .ssa_variable_definition(&super_param_var)
+    else {
         log::debug!("  could not find definition of variable?");
         return None;
     };
@@ -108,35 +115,32 @@ fn return_type_for_super_call(call: &util::Call, view: &BinaryView) -> Option<Re
     };
 
     let Some(super_class_symbol) = view.symbol_by_address(super_class_ptr) else {
-        log::debug!("No symbol found for super class at {:#0x}", super_class_ptr);
+        log::debug!("No symbol found for super class at {super_class_ptr:#0x}");
         return None;
     };
 
     let super_class_symbol_name = super_class_symbol.full_name();
     let Some(class_name) =
-        util::class_name_from_symbol_name(&super_class_symbol_name.to_bytes().as_bstr())
+        util::class_name_from_symbol_name(super_class_symbol_name.to_bytes().as_bstr())
     else {
-        log::debug!(
-            "Unable to extract class name from symbol name: {:?}",
-            super_class_symbol_name
-        );
+        log::debug!("Unable to extract class name from symbol name: {super_class_symbol_name:?}");
         return None;
     };
 
     let Some(class_type) = view.type_by_name(class_name.to_str_lossy()) else {
-        log::debug!("No type found for class named {:?}", class_name);
+        log::debug!("No type found for class named {class_name:?}");
         return None;
     };
 
     Some(Type::pointer(&call.target.arch(), &class_type))
 }
 
-fn process_instruction(instr: MediumLevelILLiftedInstruction, view: &BinaryView) -> Option<()> {
-    let call = util::match_call_to_function_named(&instr, view, OBJC_MSG_SEND_SUPER_FUNCTIONS)?;
+fn process_instruction(instr: &MediumLevelILLiftedInstruction, view: &BinaryView) -> Option<()> {
+    let call = util::match_call_to_function_named(instr, view, OBJC_MSG_SEND_SUPER_FUNCTIONS)?;
 
     util::adjust_return_type_of_call(
         &call,
-        return_type_for_super_call(&call, view)?,
+        return_type_for_super_call(&call, view)?.as_ref(),
         view,
         "Adjusted return type of super init call",
     );
@@ -154,7 +158,7 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
 
     for basic_block in &mlil_ssa.basic_blocks() {
         for instr in basic_block.iter() {
-            process_instruction(instr.lift(), &view);
+            process_instruction(&instr.lift(), &view);
         }
     }
 }

@@ -27,7 +27,7 @@ fn register_activities(
     memory_management: &Activity,
     types_alloc_init: &Activity,
     types_super_init: &Activity,
-    workflow: Ref<Workflow>,
+    workflow: &Workflow,
 ) {
     if !workflow.registered() {
         log::debug!(
@@ -114,19 +114,19 @@ pub extern "C" fn CorePluginInit() -> bool {
         &memory_management_activity,
         &types_alloc_init_activity,
         &types_super_init_activity,
-        Workflow::instance("core.function.metaAnalysis"),
+        &Workflow::instance("core.function.metaAnalysis"),
     );
     register_activities(
         &memory_management_activity,
         &types_alloc_init_activity,
         &types_super_init_activity,
-        Workflow::instance("core.function.objectiveC"),
+        &Workflow::instance("core.function.objectiveC"),
     );
     register_activities(
         &memory_management_activity,
         &types_alloc_init_activity,
         &types_super_init_activity,
-        Workflow::instance("core.function.sharedCache"),
+        &Workflow::instance("core.function.sharedCache"),
     );
 
     true

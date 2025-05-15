@@ -11,7 +11,7 @@ use binaryninja::{
     workflow::AnalysisContext,
 };
 
-use bn_bdash_extras::llil;
+use bn_bdash_extras::llil::{Expression, Instruction};
 
 // j_ prefixes are for stub functions in the dyld shared cache.
 // The prefix is added by Binary Ninja's shared cache workflow.
@@ -46,11 +46,10 @@ where
     LowLevelILInstruction<'func, M, F>: InstructionHandler<'func, M, F>,
     LowLevelILExpression<'func, M, F, ValueExpr>: ExpressionHandler<'func, M, F>,
 {
-    use llil::{Expression::*, Instruction::*};
-
     let target = match instr.into() {
-        Call(ConstPtr(address)) | TailCall(ConstPtr(address)) => address,
-        Goto(target) => target.address().clone(),
+        Instruction::Call(Expression::ConstPtr(address))
+        | Instruction::TailCall(Expression::ConstPtr(address)) => address,
+        Instruction::Goto(target) => target.address(),
         _ => return false,
     };
 
@@ -75,8 +74,7 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
 
     let mut did_replace = false;
     for idx in 0..=llil.instruction_count() {
-        let Some(instr) = llil.instruction_from_index(LowLevelInstructionIndex(idx as usize))
-        else {
+        let Some(instr) = llil.instruction_from_index(LowLevelInstructionIndex(idx)) else {
             continue;
         };
 
@@ -86,19 +84,17 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
             continue;
         }
 
-        use llil::Expression::*;
-        use llil::Instruction::*;
         match (&instr).into() {
-            TailCall(_) => unsafe {
+            Instruction::TailCall(_) => unsafe {
                 llil.replace_expression(
                     instr.expr_idx(),
                     llil.ret(llil.reg(link_register_size, link_register)),
                 );
             },
-            Call(_) => unsafe {
+            Instruction::Call(_) => unsafe {
                 llil.replace_expression(instr.expr_idx(), llil.nop());
             },
-            Goto(_) => {
+            Instruction::Goto(_) => {
                 // The shared cache workflow inlines calls to stub functions, which causes them
                 // to show up as a `lr = <next instruction>; goto <stub function instruction>;` sequence.
                 // We need to remove the load of `lr`  and update the `goto` to jump to the next instruction.
@@ -114,13 +110,17 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
                 }
 
                 let Some(prev) =
-                    llil.instruction_from_index(LowLevelInstructionIndex(idx - 1 as usize))
+                    llil.instruction_from_index(LowLevelInstructionIndex(idx - 1_usize))
                 else {
                     continue;
                 };
 
                 let target = match (&prev).into() {
-                    SetReg(reg, ConstPtr(target)) if reg == link_register => target,
+                    Instruction::SetReg(reg, Expression::ConstPtr(target))
+                        if reg == link_register =>
+                    {
+                        target
+                    }
                     _ => continue,
                 };
                 let mut label = llil.label_for_address(target).unwrap_or_else(|| {

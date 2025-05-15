@@ -35,6 +35,7 @@ pub(crate) fn selector_name_from_symbol_name(symbol_name: &BStr) -> Option<&BStr
     })
 }
 
+#[allow(clippy::struct_field_names)]
 pub(crate) struct Call<'a> {
     pub instr: &'a MediumLevelILLiftedInstruction,
     pub call: &'a LiftedCallSsa,
@@ -47,10 +48,10 @@ pub(crate) fn match_call_to_function_named<'a>(
     view: &'a BinaryView,
     function_names: &'a [&[u8]],
 ) -> Option<Call<'a>> {
-    let call = match instr.kind {
-        MediumLevelILLiftedInstructionKind::CallSsa(ref call) => call,
-        MediumLevelILLiftedInstructionKind::TailcallSsa(ref call) => call,
-        _ => return None,
+    let (MediumLevelILLiftedInstructionKind::TailcallSsa(ref call)
+    | MediumLevelILLiftedInstructionKind::CallSsa(ref call)) = instr.kind
+    else {
+        return None;
     };
 
     let MediumLevelILLiftedInstructionKind::ConstPtr(Constant {
@@ -78,7 +79,7 @@ pub(crate) fn match_call_to_function_named<'a>(
 /// A tag is added at the call instruction with the given description.
 pub(crate) fn adjust_return_type_of_call(
     call: &Call<'_>,
-    return_type: Ref<Type>,
+    return_type: &Type,
     view: &BinaryView,
     tag_description: &str,
 ) {
@@ -92,7 +93,7 @@ pub(crate) fn adjust_return_type_of_call(
     };
 
     let adjusted_call_type = Type::function(
-        &return_type,
+        return_type,
         target_function_type.parameters().unwrap(),
         target_function_type.has_variable_arguments().contents,
     );
