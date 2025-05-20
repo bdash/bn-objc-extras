@@ -2,7 +2,7 @@ use binaryninja::{
     binary_view::{BinaryView, BinaryViewExt as _},
     medium_level_il::{
         MediumLevelILLiftedInstruction, MediumLevelILLiftedInstructionKind,
-        operation::{Constant, LiftedSetVarSsa, LiftedSetVarSsaField, Var, VarSsa},
+        operation::{Constant, LiftedSetVarSsa, LiftedSetVarSsaField, LiftedVarPhi, Var, VarSsa},
     },
     rc::Ref,
     types::Type,
@@ -52,7 +52,7 @@ fn return_type_for_super_call(call: &util::Call, view: &BinaryView) -> Option<Re
 
     // Parameter is an SSA variable. Find its definitions to find when it was assigned.
     // From there we can determine the values it was assigned.
-    let Some(def) = call
+    let Some(super_param_def) = call
         .instr
         .function
         .ssa_variable_definition(&super_param_var)
@@ -61,20 +61,48 @@ fn return_type_for_super_call(call: &util::Call, view: &BinaryView) -> Option<Re
         return None;
     };
 
-    let def = def.lift();
-    let MediumLevelILLiftedInstructionKind::SetVarSsa(LiftedSetVarSsa { src, .. }) = def.kind
-    else {
-        log::error!(
-            "Unhandled variable definition at {:#0x} {:?}",
-            def.address,
-            def
-        );
-        return None;
+    let src = match super_param_def.lift().kind {
+        MediumLevelILLiftedInstructionKind::SetVarSsa(LiftedSetVarSsa { src, .. }) => src,
+        MediumLevelILLiftedInstructionKind::VarPhi(LiftedVarPhi { .. }) => {
+            // The Swift compiler generates code that conditionally assigns to the receiver field of `objc_super`.
+            // TODO: Recognize that pattern and handle it.
+            log::debug!(
+                "  found phi node for definition of `objc_super` variable at {:#0x} {:?}",
+                super_param_def.address,
+                super_param_def
+            );
+            return None;
+        }
+        _ => {
+            log::error!(
+                "Unexpected variable definition kind at {:#0x} {:#x?}",
+                super_param_def.address,
+                super_param_def
+            );
+            return None;
+        }
     };
 
-    let MediumLevelILLiftedInstructionKind::AddressOf(Var { src: src_var }) = src.kind else {
-        log::error!("Unexpected source of MLIL_SET_VAR_SSA");
-        return None;
+    let src_var = match src.kind {
+        MediumLevelILLiftedInstructionKind::AddressOf(Var { src: src_var }) => src_var,
+        MediumLevelILLiftedInstructionKind::VarSsa(_)
+        | MediumLevelILLiftedInstructionKind::Sub(_) => {
+            // The Swift compiler generates code that initializes the `objc_super` variable in more varied ways.
+            log::debug!(
+                "  found non-address-of variable definition of `objc_super` variable at {:#0x} {:?}",
+                super_param_def.address,
+                super_param_def
+            );
+            return None;
+        }
+        _ => {
+            log::error!(
+                "Unexpected source of variable definition at {:#0x} {:x?}",
+                super_param_def.address,
+                super_param_def
+            );
+            return None;
+        }
     };
 
     // `src_var` is a `struct objc_super`. Find constant values assigned to the `super_class` field (offset 8).
