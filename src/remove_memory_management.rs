@@ -123,11 +123,19 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
                     }
                     _ => continue,
                 };
-                let mut label = llil.label_for_address(target).unwrap_or_else(|| {
+
+                let Some(mut label) = llil.label_for_address(target).or_else(|| {
                     let mut label = LowLevelILLabel::new();
-                    label.operand = llil.instruction_index_at(target).unwrap().0;
-                    label
-                });
+                    label.operand = llil.instruction_index_at(target)?.0;
+                    Some(label)
+                }) else {
+                    log::debug!(
+                        "Could not create label for address {target:#0x} that was assigned to lr at {:#0x}",
+                        instr.address()
+                    );
+                    continue;
+                };
+
                 unsafe {
                     llil.replace_expression(prev.expr_idx(), llil.nop());
                     llil.replace_expression(instr.expr_idx(), llil.goto(&mut label));
