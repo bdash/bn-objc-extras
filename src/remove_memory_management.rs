@@ -86,12 +86,14 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
 
         match (&instr).into() {
             Instruction::TailCall(_) => unsafe {
+                llil.set_current_address(instr.address());
                 llil.replace_expression(
                     instr.expr_idx(),
                     llil.ret(llil.reg(link_register_size, link_register)),
                 );
             },
             Instruction::Call(_) => unsafe {
+                llil.set_current_address(instr.address());
                 llil.replace_expression(instr.expr_idx(), llil.nop());
             },
             Instruction::Goto(_) => {
@@ -137,7 +139,9 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
                 };
 
                 unsafe {
+                    llil.set_current_address(prev.address());
                     llil.replace_expression(prev.expr_idx(), llil.nop());
+                    llil.set_current_address(instr.address());
                     llil.replace_expression(instr.expr_idx(), llil.goto(&mut label));
                 }
             }
