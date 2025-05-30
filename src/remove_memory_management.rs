@@ -96,20 +96,20 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
                 llil.set_current_address(instr.address());
                 llil.replace_expression(instr.expr_idx(), llil.nop());
             },
+            Goto(_) if idx == 0 => unsafe {
+                // If the `objc_retain` is the first instruction in the function, this function
+                // must only contain the call to the memory management function since when the
+                // memory management function returns, it will return to this function's caller.
+                llil.set_current_address(instr.address());
+                    llil.replace_expression(
+                        instr.expr_idx(),
+                        llil.ret(llil.reg(link_register_size, link_register)),
+                    );
+            }
             Goto(_) => {
                 // The shared cache workflow inlines calls to stub functions, which causes them
                 // to show up as a `lr = <next instruction>; goto <stub function instruction>;` sequence.
                 // We need to remove the load of `lr`  and update the `goto` to jump to the next instruction.
-
-                if idx == 0 {
-                    // If the `objc_retain` is the first instruction in the function, `lr` is already set.
-                    // TODO: What should we rewrite this to? See `_MecabraCandidateRetain` in libmecabra.dylib.
-                    log::debug!(
-                        "Found goto at first instruction in function: {:#0x}",
-                        instr.address()
-                    );
-                    continue;
-                }
 
                 let Some(prev) =
                     llil.instruction_from_index(LowLevelInstructionIndex(idx - 1_usize))
@@ -123,17 +123,12 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
                     _ => continue,
                 };
 
-                let Some(mut label) = llil.label_for_address(target).or_else(|| {
-                    let mut label = LowLevelILLabel::new();
-                    label.operand = llil.instruction_index_at(target)?.0;
-                    Some(label)
-                }) else {
-                    log::debug!(
-                        "Could not create label for address {target:#0x} that was assigned to lr at {:#0x}",
-                        instr.address()
-                    );
+                let Some(LowLevelInstructionIndex(target_idx)) = llil.instruction_index_at(target) else {   
                     continue;
                 };
+
+                let mut label = LowLevelILLabel::new();
+                label.operand = target_idx;
 
                 unsafe {
                     llil.set_current_address(prev.address());
