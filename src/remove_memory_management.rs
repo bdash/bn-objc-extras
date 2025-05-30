@@ -105,7 +105,7 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
                         instr.expr_idx(),
                         llil.ret(llil.reg(link_register_size, link_register)),
                     );
-            }
+            },
             Goto(_) => {
                 // The shared cache workflow inlines calls to stub functions, which causes them
                 // to show up as a `lr = <next instruction>; goto <stub function instruction>;` sequence.

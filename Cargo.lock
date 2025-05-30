@@ -14,7 +14,7 @@ dependencies = [
 [[package]]
 name = "binaryninja"
 version = "0.1.0"
-source = "git+https://github.com/bdash/binaryninja-api.git?branch=all-the-things#7ddaa8d971dbe4c8301b2ea967b06926d272141c"
+source = "git+https://github.com/Vector35/binaryninja-api.git?branch=dev#8ba8388e12ab32ad937c4514f7a907d2530f1ef8"
 dependencies = [
  "binaryninjacore-sys",
  "log",
@@ -25,7 +25,7 @@ dependencies = [
 [[package]]
 name = "binaryninjacore-sys"
 version = "0.1.0"
-source = "git+https://github.com/bdash/binaryninja-api.git?branch=all-the-things#7ddaa8d971dbe4c8301b2ea967b06926d272141c"
+source = "git+https://github.com/Vector35/binaryninja-api.git?branch=dev#8ba8388e12ab32ad937c4514f7a907d2530f1ef8"
 dependencies = [
  "bindgen",
  "proc-macro2",
@@ -60,7 +60,7 @@ checksum = "1b8e56985ec62d17e9c1001dc89c88ecd7dc08e47eba5ec7c29c7b5eeecde967"
 [[package]]
 name = "bn-bdash-extras"
 version = "0.1.0"
-source = "git+https://github.com/bdash/bn-bdash-extras?branch=macros#28083bfdb5a2abd11bea1e73f6765ec66b7e717e"
+source = "git+https://github.com/bdash/bn-bdash-extras?branch=dev#3091d29b37744979d4d00dc8ab8bfe9e37acd379"
 dependencies = [
  "binaryninja",
  "bn-bdash-extras-macros",
@@ -73,7 +73,7 @@ dependencies = [
 [[package]]
 name = "bn-bdash-extras-macros"
 version = "0.1.0"
-source = "git+https://github.com/bdash/bn-bdash-extras?branch=macros#28083bfdb5a2abd11bea1e73f6765ec66b7e717e"
+source = "git+https://github.com/bdash/bn-bdash-extras?branch=dev#3091d29b37744979d4d00dc8ab8bfe9e37acd379"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -201,9 +201,9 @@ dependencies = [
 
 [[package]]
 name = "prettyplease"
-version = "0.2.32"
+version = "0.2.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "664ec5419c51e34154eec046ebcba56312d5a2fc3b09a06da188e1ad21afadf6"
+checksum = "9dee91521343f4c5c6a63edd65e54f31f5c92fe8978c40a4282f8372194c6a7d"
 dependencies = [
  "proc-macro2",
  "syn",

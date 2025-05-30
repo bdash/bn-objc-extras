@@ -7,7 +7,7 @@ edition = "2024"
 binaryninja = { git = "https://github.com/Vector35/binaryninja-api.git", branch = "dev" }
 log = "0.4"
 itertools = "0.13"
-bn-bdash-extras = { git = "https://github.com/bdash/bn-bdash-extras", branch = "macros" }
+bn-bdash-extras = { git = "https://github.com/bdash/bn-bdash-extras", branch = "dev" }
 bstr = "1.12.0"
 
 [lib]
@@ -25,6 +25,3 @@ pedantic = { level = "warn", priority = -1 }
 cast_sign_loss = "allow"
 items_after_statements = "allow"
 too_many_lines = "allow"
-
-[patch."https://github.com/Vector35/binaryninja-api.git"]
-binaryninja = { git = "https://github.com/bdash/binaryninja-api.git", branch = "all-the-things" }
