@@ -11,7 +11,7 @@ use binaryninja::{
     workflow::AnalysisContext,
 };
 
-use bn_bdash_extras::llil::{Expression, Instruction};
+use bn_bdash_extras::llil::match_instr;
 
 // j_ prefixes are for stub functions in the dyld shared cache.
 // The prefix is added by Binary Ninja's shared cache workflow.
@@ -46,13 +46,12 @@ where
     LowLevelILInstruction<'func, M, F>: InstructionHandler<'func, M, F>,
     LowLevelILExpression<'func, M, F, ValueExpr>: ExpressionHandler<'func, M, F>,
 {
-    let target = match instr.into() {
-        Instruction::Call(Expression::ConstPtr(address))
-        | Instruction::TailCall(Expression::ConstPtr(address)) => address,
-        Instruction::Goto(target) => target.address(),
+    let target = match_instr! {
+        instr,
+        Call(ConstPtr(address)) | TailCall(ConstPtr(address)) => address,
+        Goto(target) => target.address(),
         _ => return false,
     };
-
     let Some(symbol) = view.symbol_by_address(target) else {
         return false;
     };
@@ -84,19 +83,20 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
             continue;
         }
 
-        match (&instr).into() {
-            Instruction::TailCall(_) => unsafe {
+        match_instr! {
+            instr,
+            TailCall(_) => unsafe {
                 llil.set_current_address(instr.address());
                 llil.replace_expression(
                     instr.expr_idx(),
                     llil.ret(llil.reg(link_register_size, link_register)),
                 );
             },
-            Instruction::Call(_) => unsafe {
+            Call(_) => unsafe {
                 llil.set_current_address(instr.address());
                 llil.replace_expression(instr.expr_idx(), llil.nop());
             },
-            Instruction::Goto(_) => {
+            Goto(_) => {
                 // The shared cache workflow inlines calls to stub functions, which causes them
                 // to show up as a `lr = <next instruction>; goto <stub function instruction>;` sequence.
                 // We need to remove the load of `lr`  and update the `goto` to jump to the next instruction.
@@ -117,12 +117,9 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
                     continue;
                 };
 
-                let target = match (&prev).into() {
-                    Instruction::SetReg(reg, Expression::ConstPtr(target))
-                        if reg == link_register =>
-                    {
-                        target
-                    }
+                let target = match_instr!{
+                    prev,
+                    SetReg(reg, ConstPtr(target)) if *reg == link_register => target,
                     _ => continue,
                 };
 
