@@ -109,7 +109,7 @@ fn return_type_for_super_call(call: &util::Call, view: &BinaryView) -> Option<Re
     let super_class_constants: Vec<_> = call
         .instr
         .function
-        .var_definitions(&src_var)
+        .variable_definitions(&src_var)
         .into_iter()
         .filter_map(|def| {
             let def = def.lift();
