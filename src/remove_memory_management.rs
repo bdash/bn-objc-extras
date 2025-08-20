@@ -123,7 +123,7 @@ pub(crate) fn action(analysis_context: &AnalysisContext) {
                     _ => continue,
                 };
 
-                let Some(LowLevelInstructionIndex(target_idx)) = llil.instruction_index_at(target) else {   
+                let Some(LowLevelInstructionIndex(target_idx)) = llil.instruction_index_at(target) else {
                     continue;
                 };
 

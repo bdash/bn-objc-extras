@@ -2,11 +2,9 @@ use binaryninja::{
     binary_view::BinaryViewExt as _,
     logger::Logger,
     rc::Ref,
-    workflow::{Activity, Workflow},
+    workflow::{Activity, Workflow, activity},
 };
 use log::LevelFilter;
-
-use bn_bdash_extras::activity;
 
 mod remove_memory_management;
 mod type_propagation;
@@ -27,35 +25,33 @@ fn register_activities(
     memory_management: &Activity,
     types_alloc_init: &Activity,
     types_super_init: &Activity,
-    workflow: &Workflow,
-) {
-    if !workflow.registered() {
+    workflow: &str,
+) -> Result<(), ()> {
+    let Some(workflow) = Workflow::cloned(workflow) else {
         log::debug!(
-            "Skipping activity registration for workflow {} as it is not registered",
-            workflow.name()
+            "Skipping activity registration for workflow {workflow} as it is not registered"
         );
-        return;
-    }
+        return Ok(());
+    };
 
-    let workflow = workflow.clone_to(&workflow.name());
-    workflow.register_activity(memory_management).unwrap();
-    workflow.register_activity(types_alloc_init).unwrap();
-    workflow.register_activity(types_super_init).unwrap();
-
-    workflow.insert(
-        "core.function.generateMediumLevelIL",
-        [memory_management.name()],
-    );
-    workflow.insert_after(
-        "core.function.analyzeConstantReferences",
-        [types_alloc_init.name()],
-    );
-    workflow.insert_after(
-        "core.function.analyzeConstantReferences",
-        [types_super_init.name()],
-    );
-
-    workflow.register().unwrap();
+    workflow
+        .register_activity(memory_management)?
+        .register_activity(types_alloc_init)?
+        .register_activity(types_super_init)?
+        .insert(
+            "core.function.generateMediumLevelIL",
+            [memory_management.name()],
+        )?
+        .insert_after(
+            "core.function.analyzeConstantReferences",
+            [types_alloc_init.name()],
+        )?
+        .insert_after(
+            "core.function.analyzeConstantReferences",
+            [types_super_init.name()],
+        )?
+        .register()?;
+    Ok(())
 }
 
 #[unsafe(no_mangle)]
@@ -77,17 +73,17 @@ pub extern "C" fn CorePluginInit() -> bool {
         "Obj-C: Remove reference counting calls",
         "Remove calls to objc_retain / objc_release / objc_autorelease to simplify the resulting higher-level ILs",
     )
-    .with_eligibility(activity::Eligibility::auto_with_default(false));
+    .eligibility(activity::Eligibility::auto_with_default(false));
 
     let types_alloc_init_config = activity::Config::action(
         OBJC_TYPES_ALLOC_INIT_ACTIVITY_NAME,
         "Obj-C: Propagate return type from objc_alloc_init",
         "Adjust the return type of calls to objc_alloc / objc_alloc_init when a fixed type is passed as an argument.",
     )
-    .with_eligibility(
+    .eligibility(
         // Currently disabled in DSCView due to https://github.com/Vector35/binaryninja-api/issues/6737
         activity::Eligibility::auto_with_default(false)
-            .with_predicate(activity::ViewType::NotIn(&["DSCView"])),
+            .predicate(activity::ViewType::not_in(["DSCView"])),
     );
 
     let types_super_init_config = activity::Config::action(
@@ -95,39 +91,40 @@ pub extern "C" fn CorePluginInit() -> bool {
         "Obj-C: Propagate return type from [super init…]",
         "Adjust the return type of calls to objc_msgSendSuper2 where the selector is in the init family.",
     )
-    .with_eligibility(activity::Eligibility::auto());
+    .eligibility(activity::Eligibility::auto());
 
-    let memory_management_activity = Activity::new_with_action(
-        &memory_management_config.to_string(),
-        remove_memory_management::action,
-    );
+    let memory_management_activity =
+        Activity::new_with_action(&memory_management_config, remove_memory_management::action);
     let types_alloc_init_activity = Activity::new_with_action(
-        &types_alloc_init_config.to_string(),
+        &types_alloc_init_config,
         type_propagation::alloc_init::action,
     );
     let types_super_init_activity = Activity::new_with_action(
-        &types_super_init_config.to_string(),
+        &types_super_init_config,
         type_propagation::super_init::action,
     );
 
-    register_activities(
+    if register_activities(
         &memory_management_activity,
         &types_alloc_init_activity,
         &types_super_init_activity,
-        &Workflow::instance("core.function.metaAnalysis"),
-    );
-    register_activities(
+        "core.function.metaAnalysis",
+    )
+    .is_err()
+    {
+        log::debug!("Failed to register activities for workflow core.function.metaAnalysis");
+    }
+
+    if register_activities(
         &memory_management_activity,
         &types_alloc_init_activity,
         &types_super_init_activity,
-        &Workflow::instance("core.function.objectiveC"),
-    );
-    register_activities(
-        &memory_management_activity,
-        &types_alloc_init_activity,
-        &types_super_init_activity,
-        &Workflow::instance("core.function.sharedCache"),
-    );
+        "core.function.objectiveC",
+    )
+    .is_err()
+    {
+        log::debug!("Failed to register activities for workflow core.function.objectiveC");
+    }
 
     true
 }
