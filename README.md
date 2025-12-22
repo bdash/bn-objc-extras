@@ -1,5 +1,17 @@
 # Experimental improvements to Objective-C analysis for Binary Ninja
 
+> [!NOTE]
+> I have since joined Vector 35 to work on Binary Ninja. The improvements
+> from this plug-in have been incorporated directly into Binary Ninja with
+> the release of Binary Ninja 5.2. This plug-in is no longer maintained and
+> there should be no reason to install it.
+
+---
+
+The original README is preserved below for historical interest.
+
+---
+
 This Binary Ninja plug-in adds several additional types of analysis related to Objective-C runtime functions.
 They are experimental and have some rough edges. The goal is to move each of the analysis types upstream
 into Binary Ninja once they mature.
